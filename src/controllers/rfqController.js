@@ -2,7 +2,7 @@ const RFQ = require("../models/RFQ");
 const Inventory = require("../models/Inventory");
 const BuyerProfile = require("../models/BuyerProfile");
 const User = require("../models/User");
-const NotificationService = require("../services/NotificationService");
+const NotificationService = require("../services/notificationService");
 
 
 /**

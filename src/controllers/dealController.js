@@ -258,7 +258,7 @@ exports.getMyDeals = async (req, res) => {
     }
 
    
-
+    
     const { status, page = 1, limit = 20 } = req.query;
 
     // Build query based on user role
