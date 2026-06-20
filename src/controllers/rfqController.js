@@ -2,7 +2,7 @@ const RFQ = require("../models/RFQ");
 const Inventory = require("../models/Inventory");
 const BuyerProfile = require("../models/BuyerProfile");
 const User = require("../models/User");
-const NotificationService = require("../services/notificationService");
+// const NotificationService = require("../services/notificationService");
 
 
 /**
@@ -493,21 +493,21 @@ exports.acceptRFQ = async (req, res) => {
     }
 
     // Send notification to supplier
-    try {
-      const NotificationService = require("../services/notificationService");
-      await NotificationService.send(rfq.supplier, {
-        title: "RFQ Accepted",
-        message: `RFQ ${rfq.rfqNumber} has been accepted by the buyer.${deal ? ` Deal ${deal.dealNumber} has been created.` : ''}`,
-        type: "rfq",
-        priority: "high",
-        relatedType: "rfq",
-        relatedId: rfq._id,
-        actionUrl: `/dashboard/deals`,
-        actionLabel: "View Deals",
-      });
-    } catch (notifError) {
-      console.error("Failed to send notification:", notifError);
-    }
+    // try {
+    //   const NotificationService = require("../services/notificationService");
+      // await NotificationService.send(rfq.supplier, {
+    //     title: "RFQ Accepted",
+    //     message: `RFQ ${rfq.rfqNumber} has been accepted by the buyer.${deal ? ` Deal ${deal.dealNumber} has been created.` : ''}`,
+    //     type: "rfq",
+    //     priority: "high",
+    //     relatedType: "rfq",
+    //     relatedId: rfq._id,
+    //     actionUrl: `/dashboard/deals`,
+    //     actionLabel: "View Deals",
+    //   });
+    // } catch (notifError) {
+    //   console.error("Failed to send notification:", notifError);
+    // }
 
     res.status(200).json({
       success: true,
@@ -679,16 +679,16 @@ exports.supplierRespondToRFQ = async (req, res) => {
     await rfq.save();
 
     // Send notification to buyer
-    await NotificationService.send(rfq.buyer, {
-      title: "Quote Received",
-      message: `You have received a quote for RFQ ${rfq.rfqNumber}`,
-      type: "rfq",
-      priority: "high",
-      relatedType: "rfq",
-      relatedId: rfq._id,
-      actionUrl: `/dashboard/rfqs/${rfq._id}`,
-      actionLabel: "View Quote",
-    });
+    // await NotificationService.send(rfq.buyer, {
+    //   title: "Quote Received",
+    //   message: `You have received a quote for RFQ ${rfq.rfqNumber}`,
+    //   type: "rfq",
+    //   priority: "high",
+    //   relatedType: "rfq",
+    //   relatedId: rfq._id,
+    //   actionUrl: `/dashboard/rfqs/${rfq._id}`,
+    //   actionLabel: "View Quote",
+    // });
 
     res.status(200).json({
       success: true,
@@ -758,21 +758,21 @@ exports.cancelRFQ = async (req, res) => {
     await rfq.save();
 
     // Send notification to supplier
-    try {
-      const NotificationService = require("../services/notificationService");
-      await NotificationService.send(rfq.supplier, {
-        title: "RFQ Cancelled",
-        message: `RFQ ${rfq.rfqNumber} has been cancelled by the buyer. Reason: ${reason || "No reason provided"}`,
-        type: "rfq",
-        priority: "normal",
-        relatedType: "rfq",
-        relatedId: rfq._id,
-        actionUrl: `/dashboard/rfqs/${rfq._id}`,
-        actionLabel: "View RFQ",
-      });
-    } catch (notifError) {
-      console.error("Failed to send notification:", notifError);
-    }
+    // try {
+    //   const NotificationService = require("../services/notificationService");
+    //   // await NotificationService.send(rfq.supplier, {
+    //   //   title: "RFQ Cancelled",
+    //   //   message: `RFQ ${rfq.rfqNumber} has been cancelled by the buyer. Reason: ${reason || "No reason provided"}`,
+    //   //   type: "rfq",
+    //   //   priority: "normal",
+    //     relatedType: "rfq",
+    //     relatedId: rfq._id,
+    //     actionUrl: `/dashboard/rfqs/${rfq._id}`,
+    //     actionLabel: "View RFQ",
+    //   });
+    // } catch (notifError) {
+    //   console.error("Failed to send notification:", notifError);
+    // }
 
     res.status(200).json({
       success: true,
