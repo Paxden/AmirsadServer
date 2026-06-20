@@ -380,12 +380,11 @@ supplierProfileSchema.virtual("kycCompletionPercentage").get(function() {
 });
 
 // Middleware to update timestamps
-supplierProfileSchema.pre("save", function(next) {
+supplierProfileSchema.pre("save", function() {
   if (this.isModified("kycStatus") && this.kycStatus === "approved") {
     this.kycApprovedAt = new Date();
   }
   this.lastActivityAt = new Date();
-  next();
 });
 
 // Static method to find pending KYC applications

@@ -107,16 +107,30 @@ exports.createAppointment = async (req, res) => {
 /**
  * Get appointments for user
  */
+/**
+ * Get appointments for user
+ */
 exports.getMyAppointments = async (req, res) => {
   try {
+    // Get user ID correctly - handle both id and _id
+    const userId = req.user.id || req.user._id;
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated",
+      });
+    }
+
     const { status, type, page = 1, limit = 10, upcoming } = req.query;
     
+    // Build query - use userId directly
     const query = {
       isActive: true,
       $or: [
-        { supplier: req.user.id },
-        { buyer: req.user.id },
-        { "participants.user": req.user.id },
+        { supplier: userId },
+        { buyer: userId },
+        { "participants.user": userId },
       ],
     };
 
@@ -128,6 +142,9 @@ exports.getMyAppointments = async (req, res) => {
       query.status = { $in: ["confirmed", "pending"] };
     }
 
+    console.log("GetMyAppointments query:", JSON.stringify(query));
+    console.log("User ID:", userId);
+
     const appointments = await Appointment.find(query)
       .populate("supplier", "fullName email phone profile")
       .populate("buyer", "fullName email phone profile")
@@ -136,9 +153,12 @@ exports.getMyAppointments = async (req, res) => {
       .populate("participants.user", "fullName email role")
       .sort({ scheduledDate: 1 })
       .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .skip((page - 1) * limit)
+      .lean();
 
     const total = await Appointment.countDocuments(query);
+
+    console.log(`Found ${total} appointments for user`);
 
     res.status(200).json({
       success: true,
@@ -152,6 +172,7 @@ exports.getMyAppointments = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch appointments",
+      error: error.message,
     });
   }
 };
@@ -212,9 +233,27 @@ exports.getAppointmentById = async (req, res) => {
 /**
  * Confirm appointment
  */
+/**
+ * Confirm appointment
+ */
+/**
+ * Confirm appointment
+ */
+/**
+ * Confirm appointment - DIRECT UPDATE VERSION
+ */
 exports.confirmAppointment = async (req, res) => {
   try {
     const { id } = req.params;
+    
+    const userId = req.user.id || req.user._id;
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated",
+      });
+    }
 
     const appointment = await Appointment.findById(id);
 
@@ -225,18 +264,65 @@ exports.confirmAppointment = async (req, res) => {
       });
     }
 
-    await appointment.confirm(req.user.id, req.user.role);
+    // Check authorization
+    const userIdStr = userId.toString();
+    const supplierIdStr = appointment.supplier ? appointment.supplier.toString() : null;
+    const buyerIdStr = appointment.buyer ? appointment.buyer.toString() : null;
+    const userRole = req.user.role;
+
+    const isAuthorized = 
+      (supplierIdStr && supplierIdStr === userIdStr) ||
+      (buyerIdStr && buyerIdStr === userIdStr) ||
+      userRole === "admin" ||
+      userRole === "staff";
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not authorized to confirm this appointment",
+      });
+    }
+
+    // Direct update - bypass the model method
+    if (userRole === "admin" || userRole === "staff") {
+      appointment.status = "confirmed";
+      appointment.confirmedBy = userId;
+      appointment.confirmedAt = new Date();
+      appointment.updatedBy = userId;
+    } else if (supplierIdStr && supplierIdStr === userIdStr) {
+      appointment.supplierConfirmed = true;
+    } else if (buyerIdStr && buyerIdStr === userIdStr) {
+      appointment.buyerConfirmed = true;
+    }
+    
+    // Check if both confirmed
+    if (appointment.supplierConfirmed && appointment.buyerConfirmed) {
+      appointment.status = "confirmed";
+    }
+    
+    await appointment.save();
+
+    // Fetch updated appointment
+    const updatedAppointment = await Appointment.findById(id)
+      .populate("supplier", "fullName email phone profile")
+      .populate("buyer", "fullName email phone profile")
+      .populate("rfq", "rfqNumber requestedWeightKg offeredPricePerKg")
+      .populate("inventory", "inventoryNumber weightKg purity")
+      .populate("participants.user", "fullName email role")
+      .populate("confirmedBy", "fullName email")
+      .lean();
 
     res.status(200).json({
       success: true,
       message: "Appointment confirmed successfully",
-      appointment,
+      appointment: updatedAppointment,
     });
   } catch (error) {
     console.error("Confirm appointment error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to confirm appointment",
+      error: error.message,
     });
   }
 };
@@ -317,10 +403,23 @@ exports.completeAppointment = async (req, res) => {
 /**
  * Mark attendance
  */
+/**
+ * Mark attendance
+ */
 exports.markAttendance = async (req, res) => {
   try {
     const { id } = req.params;
     const { attended } = req.body;
+
+    // Get user ID correctly - handle both id and _id
+    const userId = req.user.id || req.user._id;
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated",
+      });
+    }
 
     const appointment = await Appointment.findById(id);
 
@@ -331,12 +430,27 @@ exports.markAttendance = async (req, res) => {
       });
     }
 
+    // Convert IDs to strings for comparison
+    const userIdStr = userId.toString();
+    const supplierIdStr = appointment.supplier ? appointment.supplier.toString() : null;
+    const buyerIdStr = appointment.buyer ? appointment.buyer.toString() : null;
+    const userRole = req.user.role;
+
+    console.log("Mark attendance debug:", {
+      userId: userIdStr,
+      supplierId: supplierIdStr,
+      buyerId: buyerIdStr,
+      userRole: userRole,
+      appointmentId: appointment._id
+    });
+
+    // Determine the role of the user
     let role = null;
-    if (appointment.supplier.toString() === req.user.id) {
+    if (supplierIdStr && supplierIdStr === userIdStr) {
       role = "supplier";
-    } else if (appointment.buyer.toString() === req.user.id) {
+    } else if (buyerIdStr && buyerIdStr === userIdStr) {
       role = "buyer";
-    } else if (req.user.role === "admin" || req.user.role === "staff") {
+    } else if (userRole === "admin" || userRole === "staff") {
       role = "staff";
     }
 
@@ -344,20 +458,33 @@ exports.markAttendance = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "You are not a participant of this appointment",
+        debug: {
+          userId: userIdStr,
+          supplierId: supplierIdStr,
+          buyerId: buyerIdStr,
+          userRole: userRole
+        }
       });
     }
 
-    await appointment.markAttendance(req.user.id, role, attended);
+    await appointment.markAttendance(userId, role, attended);
+
+    // Reload appointment to get updated data
+    const updatedAppointment = await Appointment.findById(id)
+      .populate("supplier", "fullName email")
+      .populate("buyer", "fullName email");
 
     res.status(200).json({
       success: true,
       message: `Attendance marked as ${attended ? "present" : "absent"}`,
+      appointment: updatedAppointment,
     });
   } catch (error) {
     console.error("Mark attendance error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to mark attendance",
+      error: error.message,
     });
   }
 };
@@ -430,6 +557,81 @@ exports.rescheduleAppointment = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to reschedule appointment",
+    });
+  }
+};
+
+/**
+ * Get all appointments (Admin/Staff only)
+ */
+exports.getAllAppointments = async (req, res) => {
+  try {
+    const {
+      status,
+      type,
+      supplier,
+      buyer,
+      startDate,
+      endDate,
+      search,
+      page = 1,
+      limit = 20,
+      sortBy = "scheduledDate",
+      sortOrder = "asc",
+    } = req.query;
+
+    const query = { isActive: true };
+
+    if (status) query.status = status;
+    if (type) query.type = type;
+    if (supplier) query.supplier = supplier;
+    if (buyer) query.buyer = buyer;
+    
+    if (startDate) {
+      query.scheduledDate = { $gte: new Date(startDate) };
+    }
+    if (endDate) {
+      query.scheduledDate = { ...query.scheduledDate, $lte: new Date(endDate) };
+    }
+    
+    if (search) {
+      query.$or = [
+        { appointmentNumber: { $regex: search, $options: "i" } },
+        { title: { $regex: search, $options: "i" } },
+        { location: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const sortOptions = {};
+    sortOptions[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+    const appointments = await Appointment.find(query)
+      .populate("supplier", "fullName email phone profile")
+      .populate("buyer", "fullName email phone profile")
+      .populate("rfq", "rfqNumber status")
+      .populate("inventory", "inventoryNumber weightKg purity")
+      .populate("participants.user", "fullName email role")
+      .populate("confirmedBy", "fullName email")
+      .populate("createdBy", "fullName email")
+      .sort(sortOptions)
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await Appointment.countDocuments(query);
+
+    res.status(200).json({
+      success: true,
+      appointments,
+      total,
+      page: parseInt(page),
+      pages: Math.ceil(total / limit),
+    });
+  } catch (error) {
+    console.error("Get all appointments error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch appointments",
+      error: error.message,
     });
   }
 };

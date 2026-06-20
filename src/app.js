@@ -27,6 +27,8 @@ const reportRoutes = require("./routes/reportRoutes");
 const taskRoutes = require("./routes/taskRoutes");
 // Add deal routes
 const dealRoutes = require("./routes/dealRoutes");
+const adminRoutes = require("./routes/adminRoutes");
+
 
 const app = express();
 
@@ -34,12 +36,36 @@ const app = express();
    MIDDLEWARE
 ---------------------------------*/
 app.use(helmet());
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    credentials: true,
-  })
-);
+
+// Change to allow multiple origins:
+
+// Update the CORS middleware configuration
+const allowedOrigins = [
+  process.env.FRONTEND_URL || "http://localhost:5173",
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://amirsad.vercel.app",
+  "https://amirsad-gold-platform.vercel.app",
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('Blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+}));
+
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -133,6 +159,8 @@ app.use("/api/tasks", taskRoutes);
 // Deal
 
 app.use("/api/deals", dealRoutes);
+
+app.use("/api/admin", adminRoutes);
 
 app.use(finalizeAudit);
 

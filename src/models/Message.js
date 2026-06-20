@@ -103,7 +103,7 @@ messageSchema.virtual("isUnread").get(function () {
 });
 
 // Pre-save middleware to generate conversation ID
-messageSchema.pre("save", function (next) {
+messageSchema.pre("save", function () {
   if (!this.conversationId) {
     // Create consistent conversation ID regardless of order
     const participants = [
@@ -112,7 +112,6 @@ messageSchema.pre("save", function (next) {
     ].sort();
     this.conversationId = participants.join("_");
   }
-  next();
 });
 
 // Static methods

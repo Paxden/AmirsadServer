@@ -37,11 +37,10 @@ const systemSettingSchema = new mongoose.Schema(
 );
 
 // Pre-save middleware to add timestamps
-systemSettingSchema.pre("save", function (next) {
+systemSettingSchema.pre("save", function () {
   if (this.isModified("value")) {
     this.updatedAt = new Date();
   }
-  next();
 });
 
 // Static method to get setting value

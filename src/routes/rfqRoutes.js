@@ -8,7 +8,10 @@ const {
   getRFQById,
   staffResponse,
   acceptRFQ,
+  getAllRFQs,
   getRFQStats,
+  supplierRespondToRFQ,
+  cancelRFQ, // Add this import
 } = require("../controllers/rfqController");
 
 const { protect } = require("../middleware/authMiddleware");
@@ -20,9 +23,15 @@ router.use(protect);
 // Buyer routes
 router.post("/", authorize("buyer"), createRFQ);
 router.get("/my-rfqs", authorize("buyer"), getBuyerRFQs);
+router.put("/:id/cancel", authorize("buyer"), cancelRFQ); 
+
+// Get all RFQs (admin/staff only)
+router.get("/", authorize("admin", "staff"), getAllRFQs);
 
 // Supplier routes
 router.get("/supplier-rfqs", authorize("supplier"), getSupplierRFQs);
+// Add supplier response route
+router.put("/:id/respond/supplier", authorize("supplier"), supplierRespondToRFQ);
 
 // Common route
 router.get("/:id", getRFQById);

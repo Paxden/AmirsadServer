@@ -10,6 +10,7 @@ const {
   completeAppointment,
   markAttendance,
   getAppointmentStats,
+  getAllAppointments,
   rescheduleAppointment,
 } = require("../controllers/appointmentController");
 
@@ -31,5 +32,7 @@ router.put("/:id/reschedule", rescheduleAppointment);
 // Admin/Staff routes
 router.put("/:id/complete", authorize("admin", "staff"), completeAppointment);
 router.get("/admin/stats", authorize("admin", "staff"), getAppointmentStats);
+// Get all appointments (admin/staff only)
+router.get("/", authorize("admin", "staff"), getAllAppointments);
 
 module.exports = router;

@@ -248,7 +248,7 @@ taskSchema.virtual("completionPercentage").get(function () {
 });
 
 // Pre-save middleware
-taskSchema.pre("save", async function (next) {
+taskSchema.pre("save", async function () {
   // Generate task number if not exists
   if (!this.taskNumber) {
     const date = new Date();
@@ -264,7 +264,6 @@ taskSchema.pre("save", async function (next) {
     this.status = "overdue";
   }
 
-  next();
 });
 
 // Methods

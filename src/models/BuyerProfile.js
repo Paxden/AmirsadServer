@@ -65,7 +65,7 @@ const buyerProfileSchema = new mongoose.Schema(
       },
       currency: {
         type: String,
-        enum: ["USD", "EUR", "GBP", "AED"],
+        enum: ["USD", "NGN"], // Only USD and Naira
         default: "USD",
       },
     },
@@ -143,6 +143,12 @@ const buyerProfileSchema = new mongoose.Schema(
       min: 0,
     },
 
+    creditLimitCurrency: {
+      type: String,
+      enum: ["USD", "NGN"],
+      default: "USD",
+    },
+
     paymentTerms: {
       type: String,
       enum: ["advance", "lc", "dpc", "net_30", "net_60", "negotiable"],
@@ -155,13 +161,16 @@ const buyerProfileSchema = new mongoose.Schema(
       accountNumber: String,
       swiftCode: String,
       iban: String,
+      // Naira specific fields
+      bankCode: String,
+      nuban: String,
     },
 
     // Trading Preferences
     preferredCurrencies: [
       {
         type: String,
-        enum: ["USD", "EUR", "GBP", "AED"],
+        enum: ["USD", "NGN"],
         default: "USD",
       },
     ],
@@ -223,6 +232,12 @@ const buyerProfileSchema = new mongoose.Schema(
       type: Number,
       default: 0,
       min: 0,
+    },
+
+    totalSpentCurrency: {
+      type: String,
+      enum: ["USD", "NGN"],
+      default: "USD",
     },
 
     averagePurchaseSize: {
@@ -339,8 +354,6 @@ const buyerProfileSchema = new mongoose.Schema(
 );
 
 // Indexes
-// buyerProfileSchema.index({ user: 1 });
-// buyerProfileSchema.index({ companyName: 1 });
 buyerProfileSchema.index({ country: 1, buyerType: 1 });
 buyerProfileSchema.index({ kycStatus: 1, isActive: 1 });
 buyerProfileSchema.index({ totalPurchased: -1 });
@@ -359,18 +372,46 @@ buyerProfileSchema.virtual("fullAddress").get(function () {
   return parts.join(", ");
 });
 
+// Formatted credit limit based on currency
 buyerProfileSchema.virtual("formattedCreditLimit").get(function () {
+  const currency = this.creditLimitCurrency || "USD";
   return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "USD",
+    currency: currency,
   }).format(this.creditLimit);
 });
 
+// Formatted total spent based on currency
 buyerProfileSchema.virtual("formattedTotalSpent").get(function () {
+  const currency = this.totalSpentCurrency || "USD";
   return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "USD",
+    currency: currency,
   }).format(this.totalSpent);
+});
+
+// Formatted annual purchase capacity
+buyerProfileSchema.virtual("formattedAnnualCapacity").get(function () {
+  if (!this.annualPurchaseCapacity) return null;
+  const currency = this.annualPurchaseCapacity.currency || "USD";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currency,
+  }).format(this.annualPurchaseCapacity.amount || 0);
+});
+
+// Naira to USD conversion helper (using approximate rate)
+buyerProfileSchema.virtual("creditLimitInUSD").get(function () {
+  if (this.creditLimitCurrency === "USD") return this.creditLimit;
+  // Approximate conversion rate - you can make this configurable
+  const nairaToUsdRate = 0.00065; // ~₦1500 to $1
+  return this.creditLimit * nairaToUsdRate;
+});
+
+buyerProfileSchema.virtual("creditLimitInNGN").get(function () {
+  if (this.creditLimitCurrency === "NGN") return this.creditLimit;
+  const usdToNairaRate = 1500; // ~$1 to ₦1500
+  return this.creditLimit * usdToNairaRate;
 });
 
 // Methods
@@ -383,9 +424,10 @@ buyerProfileSchema.methods.canPurchase = function (amount) {
   return true;
 };
 
-buyerProfileSchema.methods.updatePurchaseHistory = async function (amount) {
+buyerProfileSchema.methods.updatePurchaseHistory = async function (amount, currency = "USD") {
   this.totalPurchased += amount;
   this.totalSpent += amount;
+  this.totalSpentCurrency = currency;
   this.completedTransactions += 1;
   this.averagePurchaseSize = this.totalSpent / this.completedTransactions;
   await this.save();
@@ -426,12 +468,11 @@ buyerProfileSchema.statics.getKYCStatistics = async function () {
 };
 
 // Pre-save middleware
-buyerProfileSchema.pre("save", function (next) {
+buyerProfileSchema.pre("save", function () {
   // Auto-update kycApprovedAt when status changes to approved
   if (this.isModified("kycStatus") && this.kycStatus === "approved") {
     this.kycApprovedAt = new Date();
   }
-  next();
 });
 
 module.exports = mongoose.model("BuyerProfile", buyerProfileSchema);

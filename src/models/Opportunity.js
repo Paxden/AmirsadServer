@@ -23,11 +23,11 @@ const opportunitySchema = new mongoose.Schema(
     goldType: {
       type: String,
       enum: [
-        "refined", // Added refined
-        "doré", // Added doré
-        "scrap", // Added scrap
-        "bars", // Added bars
-        "nuggets", // Added nuggets
+        "refined",
+        "doré",
+        "scrap",
+        "bars",
+        "nuggets",
         "gold_dore",
         "gold_bar",
         "gold_nugget",
@@ -70,7 +70,14 @@ const opportunitySchema = new mongoose.Schema(
     currency: {
       type: String,
       default: "USD",
-      enum: ["USD", "EUR", "GBP", "AED"],
+      enum: ["USD", "NGN"], // Only USD and Naira
+    },
+
+    // Exchange rate for currency conversion tracking
+    exchangeRate: {
+      type: Number,
+      default: 1,
+      min: 0,
     },
 
     description: {
@@ -94,7 +101,7 @@ const opportunitySchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["draft", "pending", "under_review", "inspection", "approved", "rejected"],
+      enum: ["draft", "pending", "under_review", "inspection", "approved", "rejected", "expired"],
       default: "pending",
     },
 
@@ -120,11 +127,215 @@ const opportunitySchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 );
 
-// Index for better query performance
+// ==================== INDEXES ====================
 opportunitySchema.index({ supplier: 1, status: 1 });
 opportunitySchema.index({ createdAt: -1 });
+opportunitySchema.index({ currency: 1 });
+opportunitySchema.index({ status: 1, createdAt: -1 });
+
+// ==================== VIRTUAL FIELDS ====================
+
+// Total value (weight * asking price)
+opportunitySchema.virtual("totalValue").get(function() {
+  return this.weightKg * this.askingPrice;
+});
+
+// Total value in USD (for reporting)
+opportunitySchema.virtual("totalValueInUSD").get(function() {
+  if (this.currency === "USD") return this.totalValue;
+  const rate = this.exchangeRate || 1500;
+  return this.totalValue / rate;
+});
+
+// Total value in Naira (for reporting)
+opportunitySchema.virtual("totalValueInNGN").get(function() {
+  if (this.currency === "NGN") return this.totalValue;
+  const rate = this.exchangeRate || 1500;
+  return this.totalValue * rate;
+});
+
+// Formatted price with currency
+opportunitySchema.virtual("formattedPrice").get(function() {
+  const currency = this.currency || "USD";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency,
+    }).format(this.askingPrice || 0);
+  } catch (error) {
+    return `${this.currency || "USD"} ${this.askingPrice || 0}`;
+  }
+});
+
+// Formatted total value with currency
+opportunitySchema.virtual("formattedTotalValue").get(function() {
+  const currency = this.currency || "USD";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency,
+    }).format(this.totalValue || 0);
+  } catch (error) {
+    return `${this.currency || "USD"} ${this.totalValue || 0}`;
+  }
+});
+
+// Formatted weight with unit
+opportunitySchema.virtual("formattedWeight").get(function() {
+  return `${this.weightKg} kg`;
+});
+
+// Status label
+opportunitySchema.virtual("statusLabel").get(function() {
+  const labels = {
+    draft: "Draft",
+    pending: "Pending Review",
+    under_review: "Under Review",
+    inspection: "Inspection",
+    approved: "Approved",
+    rejected: "Rejected",
+    expired: "Expired",
+  };
+  return labels[this.status] || this.status;
+});
+
+// ==================== PRE-SAVE MIDDLEWARE ====================
+opportunitySchema.pre("save", function() {
+  try {
+    // Set default exchange rate if not set
+    if (!this.exchangeRate) {
+      this.exchangeRate = this.currency === "USD" ? 1 : 1500;
+    }
+    
+  } catch (error) {
+    console.log(error);
+  }
+});
+
+// ==================== METHODS ====================
+
+// Check if opportunity can be submitted
+opportunitySchema.methods.canSubmit = function() {
+  return this.status === "draft" || this.status === "rejected";
+};
+
+// Submit opportunity (change status to pending)
+opportunitySchema.methods.submit = async function(userId) {
+  if (!this.canSubmit()) {
+    throw new Error(`Cannot submit opportunity with status: ${this.status}`);
+  }
+  this.status = "pending";
+  this.createdBy = userId;
+  await this.save();
+  return this;
+};
+
+// Approve opportunity
+opportunitySchema.methods.approve = async function(userId, notes) {
+  if (this.status !== "pending" && this.status !== "under_review") {
+    throw new Error(`Cannot approve opportunity with status: ${this.status}`);
+  }
+  this.status = "approved";
+  this.approvedBy = userId;
+  this.approvedAt = new Date();
+  this.reviewNote = notes || this.reviewNote;
+  await this.save();
+  return this;
+};
+
+// Reject opportunity
+opportunitySchema.methods.reject = async function(userId, reason) {
+  if (this.status !== "pending" && this.status !== "under_review") {
+    throw new Error(`Cannot reject opportunity with status: ${this.status}`);
+  }
+  this.status = "rejected";
+  this.reviewedBy = userId;
+  this.rejectionReason = reason;
+  await this.save();
+  return this;
+};
+
+// ==================== STATIC METHODS ====================
+
+// Get opportunities by status
+opportunitySchema.statics.getByStatus = async function(status) {
+  return this.find({ status })
+    .populate("supplier", "fullName email phone")
+    .sort("-createdAt");
+};
+
+// Get pending opportunities (for admin review)
+opportunitySchema.statics.getPending = async function() {
+  return this.find({
+    status: { $in: ["pending", "under_review"] }
+  })
+    .populate("supplier", "fullName email phone profile")
+    .sort("-createdAt");
+};
+
+// Get opportunities by currency
+opportunitySchema.statics.getByCurrency = async function(currency) {
+  return this.find({
+    currency: currency,
+    status: { $in: ["approved", "pending"] }
+  })
+    .populate("supplier", "fullName email phone")
+    .sort("-createdAt");
+};
+
+// Get opportunity statistics
+opportunitySchema.statics.getStats = async function() {
+  const stats = await this.aggregate([
+    {
+      $group: {
+        _id: "$status",
+        count: { $sum: 1 },
+        totalWeight: { $sum: "$weightKg" },
+        totalValue: { $sum: { $multiply: ["$weightKg", "$askingPrice"] } },
+      },
+    },
+  ]);
+  return stats;
+};
+
+// Get opportunity statistics by currency
+opportunitySchema.statics.getStatsByCurrency = async function() {
+  const stats = await this.aggregate([
+    {
+      $group: {
+        _id: "$currency",
+        count: { $sum: 1 },
+        totalWeight: { $sum: "$weightKg" },
+        totalValue: { $sum: { $multiply: ["$weightKg", "$askingPrice"] } },
+      },
+    },
+  ]);
+  return stats;
+};
+
+// Get supplier opportunities with stats
+opportunitySchema.statics.getSupplierOpportunities = async function(supplierId) {
+  const opportunities = await this.find({
+    supplier: supplierId,
+    status: { $ne: "draft" }
+  })
+    .sort("-createdAt");
+  
+  const stats = {
+    total: opportunities.length,
+    pending: opportunities.filter(o => o.status === "pending").length,
+    approved: opportunities.filter(o => o.status === "approved").length,
+    rejected: opportunities.filter(o => o.status === "rejected").length,
+    totalWeight: opportunities.reduce((sum, o) => sum + o.weightKg, 0),
+    totalValue: opportunities.reduce((sum, o) => sum + (o.weightKg * o.askingPrice), 0),
+  };
+  
+  return { opportunities, stats };
+};
 
 module.exports = mongoose.model("Opportunity", opportunitySchema);

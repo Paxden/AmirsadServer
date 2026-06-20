@@ -354,26 +354,54 @@ exports.approveOpportunity = async (req, res) => {
       });
     }
 
+    // Update opportunity
     opportunity.status = "approved";
     opportunity.approvedBy = req.user._id;
     opportunity.approvedAt = new Date();
     opportunity.reviewNote = notes || "";
     await opportunity.save();
 
+    // Check if inventory already exists
+    const existingInventory = await Inventory.findOne({ opportunity: opportunity._id });
+    if (existingInventory) {
+      return res.status(200).json({
+        success: true,
+        message: "Opportunity approved, inventory already exists",
+        opportunity,
+        inventory: existingInventory,
+      });
+    }
+
+    // Calculate values
+    const weightKg = opportunity.weightKg || 0;
+    const askingPrice = opportunity.askingPrice || 0;
+    const pricePerGram = weightKg > 0 ? askingPrice / (weightKg * 1000) : 0;
+
     // Create inventory from approved opportunity
-    const inventory = await Inventory.create({
+    const inventoryData = {
       opportunity: opportunity._id,
       supplier: opportunity.supplier,
-      weightKg: opportunity.weightKg,
-      availableWeightKg: opportunity.weightKg,
-      purity: opportunity.purity,
-      location: opportunity.location,
-      askingPrice: opportunity.askingPrice,
-      goldType: opportunity.goldType,
+      weightKg: weightKg,
+      availableWeightKg: weightKg,
+      purity: opportunity.purity || 0,
+      location: opportunity.location || "Not specified",
+      askingPrice: askingPrice,
+      pricePerGram: pricePerGram,
+      goldType: opportunity.goldType || "refined",
       form: opportunity.form || "bars",
-      status: "pending_approval",
+      storageLocation: "supplier_premises",
+      inspectionAvailable: true,
+      status: "available",
+      isActive: true,
+      currency: "USD",
       createdBy: req.user._id,
-    });
+      approvedBy: req.user._id,
+      approvedAt: new Date(),
+    };
+
+    console.log("Creating inventory with data:", inventoryData);
+
+    const inventory = await Inventory.create(inventoryData);
 
     res.status(200).json({
       success: true,
@@ -383,9 +411,15 @@ exports.approveOpportunity = async (req, res) => {
     });
   } catch (error) {
     console.error("Approve opportunity error:", error);
+    // Log the full error for debugging
+    console.error("Error details:", error.message);
+    if (error.errors) {
+      console.error("Validation errors:", error.errors);
+    }
     res.status(500).json({
       success: false,
       message: "Failed to approve opportunity",
+      error: error.message,
     });
   }
 };
@@ -434,30 +468,95 @@ exports.rejectOpportunity = async (req, res) => {
 };
 
 /**
- * Get opportunity stats (admin/staff)
+ * Get opportunity statistics for admin dashboard
  */
+/**
+ * Get opportunity statistics for admin dashboard
+ */
+
 exports.getOpportunityStats = async (req, res) => {
   try {
-    const stats = await Opportunity.aggregate([
-      {
-        $group: {
-          _id: "$status",
-          count: { $sum: 1 },
-          totalWeight: { $sum: "$weightKg" },
-          totalValue: { $sum: "$askingPrice" },
+    const [
+      total,
+      pending,
+      underReview,
+      inspection,
+      approved,
+      rejected,
+      expired,
+      weightResult,
+      valueResult,
+    ] = await Promise.all([
+      Opportunity.countDocuments(),
+
+      Opportunity.countDocuments({
+        status: "pending",
+      }),
+
+      Opportunity.countDocuments({
+        status: "under_review",
+      }),
+
+      Opportunity.countDocuments({
+        status: "inspection",
+      }),
+
+      Opportunity.countDocuments({
+        status: "approved",
+      }),
+
+      Opportunity.countDocuments({
+        status: "rejected",
+      }),
+
+      Opportunity.countDocuments({
+        status: "expired",
+      }),
+
+      Opportunity.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalWeight: {
+              $sum: "$weightKg",
+            },
+          },
         },
-      },
+      ]),
+
+      Opportunity.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalValue: {
+              $sum: "$askingPrice",
+            },
+          },
+        },
+      ]),
     ]);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      stats,
+      stats: {
+        total,
+        pending,
+        underReview,
+        inspection,
+        approved,
+        rejected,
+        expired,
+        totalWeight: weightResult[0]?.totalWeight || 0,
+        totalValue: valueResult[0]?.totalValue || 0,
+      },
     });
   } catch (error) {
-    console.error("Get opportunity stats error:", error);
-    res.status(500).json({
+    console.error("Get Opportunity Stats Error:", error);
+
+    return res.status(500).json({
       success: false,
-      message: "Failed to fetch statistics",
+      message: "Failed to fetch opportunity statistics",
+      error: error.message,
     });
   }
 };

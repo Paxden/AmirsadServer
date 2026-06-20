@@ -6,11 +6,8 @@ const rfqSchema = new mongoose.Schema(
     rfqNumber: {
       type: String,
       unique: true,
-      required: true,
-      index: true,
     },
 
-    // Buyer Information
     buyer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -23,7 +20,6 @@ const rfqSchema = new mongoose.Schema(
       ref: "BuyerProfile",
     },
 
-    // Inventory/Seller Information
     inventory: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Inventory",
@@ -38,17 +34,10 @@ const rfqSchema = new mongoose.Schema(
       index: true,
     },
 
-    // RFQ Details
     requestedWeightKg: {
       type: Number,
       required: true,
       min: 0.01,
-      validate: {
-        validator: function(value) {
-          return value <= this.inventory?.availableWeightKg;
-        },
-        message: "Requested weight exceeds available inventory",
-      },
     },
 
     offeredPricePerKg: {
@@ -65,11 +54,17 @@ const rfqSchema = new mongoose.Schema(
 
     currency: {
       type: String,
-      enum: ["USD", "EUR", "GBP", "AED"],
+      enum: ["USD", "NGN"], // Only USD and Naira
       default: "USD",
     },
 
-    // Purity and Quality Requirements
+    // Exchange rate for currency conversion tracking
+    exchangeRate: {
+      type: Number,
+      default: 1,
+      min: 0,
+    },
+
     requiredPurity: {
       type: Number,
       min: 0,
@@ -81,7 +76,6 @@ const rfqSchema = new mongoose.Schema(
       default: false,
     },
 
-    // Delivery Preferences
     deliveryTerms: {
       type: String,
       enum: ["ex_works", "fob", "cif", "door_delivery", "negotiable"],
@@ -103,20 +97,18 @@ const rfqSchema = new mongoose.Schema(
       notes: String,
     },
 
-    // Timeline
     validUntil: {
       type: Date,
       required: true,
       default: function() {
         const date = new Date();
-        date.setDate(date.getDate() + 7); // Valid for 7 days
+        date.setDate(date.getDate() + 7);
         return date;
       },
     },
 
     preferredDeliveryDate: Date,
 
-    // Communication
     message: {
       type: String,
       maxlength: 1000,
@@ -131,7 +123,6 @@ const rfqSchema = new mongoose.Schema(
       },
     ],
 
-    // Status Management
     status: {
       type: String,
       enum: [
@@ -146,11 +137,10 @@ const rfqSchema = new mongoose.Schema(
         "closed",
         "cancelled",
       ],
-      default: "draft",
+      default: "pending",
       index: true,
     },
 
-    // Pricing and Negotiation
     quotePricePerKg: {
       type: Number,
       min: 0,
@@ -171,6 +161,19 @@ const rfqSchema = new mongoose.Schema(
       min: 0,
     },
 
+    // Track currency for quotes and final prices
+    quoteCurrency: {
+      type: String,
+      enum: ["USD", "NGN"],
+      default: "USD",
+    },
+
+    finalCurrency: {
+      type: String,
+      enum: ["USD", "NGN"],
+      default: "USD",
+    },
+
     negotiationHistory: [
       {
         round: {
@@ -188,6 +191,11 @@ const rfqSchema = new mongoose.Schema(
           type: mongoose.Schema.Types.ObjectId,
           ref: "User",
         },
+        currency: {
+          type: String,
+          enum: ["USD", "NGN"],
+          default: "USD",
+        },
         createdAt: {
           type: Date,
           default: Date.now,
@@ -195,7 +203,6 @@ const rfqSchema = new mongoose.Schema(
       },
     ],
 
-    // Staff Handling
     staffResponse: {
       type: String,
     },
@@ -216,12 +223,11 @@ const rfqSchema = new mongoose.Schema(
       ref: "User",
     },
 
-    // Response History (for tracking)
     responseHistory: [
       {
         action: {
           type: String,
-          enum: ["created", "updated", "quoted", "negotiated", "accepted", "rejected", "expired"],
+          enum: ["created", "updated", "quoted", "negotiated", "accepted", "rejected", "expired", "cancelled"],
         },
         message: String,
         price: Number,
@@ -236,7 +242,6 @@ const rfqSchema = new mongoose.Schema(
       },
     ],
 
-    // Appointment/Meeting
     appointmentScheduled: {
       type: Boolean,
       default: false,
@@ -258,7 +263,6 @@ const rfqSchema = new mongoose.Schema(
       },
     },
 
-    // Audit Trail
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -269,7 +273,6 @@ const rfqSchema = new mongoose.Schema(
       ref: "User",
     },
 
-    // Soft Delete
     isActive: {
       type: Boolean,
       default: true,
@@ -285,69 +288,116 @@ const rfqSchema = new mongoose.Schema(
   }
 );
 
-// Indexes
-// rfqSchema.index({ rfqNumber: 1 });
+// ==================== INDEXES ====================
 rfqSchema.index({ buyer: 1, status: 1 });
 rfqSchema.index({ supplier: 1, status: 1 });
 rfqSchema.index({ status: 1, validUntil: 1 });
 rfqSchema.index({ createdAt: -1 });
-rfqSchema.index({ "negotiationHistory.createdAt": -1 });
+rfqSchema.index({ currency: 1 });
 
-// Virtuals
+// ==================== VIRTUAL FIELDS ====================
+
+// Safe virtual for formatted total value
+rfqSchema.virtual("formattedTotalValue").get(function() {
+  const currency = this.currency || "USD";
+  const amount = this.offeredTotalPrice || 0;
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency,
+    }).format(amount);
+  } catch (error) {
+    return `${currency} ${amount}`;
+  }
+});
+
+// Total value in USD (for reporting)
+rfqSchema.virtual("totalValueInUSD").get(function() {
+  if (this.currency === "USD") return this.offeredTotalPrice || 0;
+  const rate = this.exchangeRate || 1500;
+  return (this.offeredTotalPrice || 0) / rate;
+});
+
+// Total value in Naira (for reporting)
+rfqSchema.virtual("totalValueInNGN").get(function() {
+  if (this.currency === "NGN") return this.offeredTotalPrice || 0;
+  const rate = this.exchangeRate || 1500;
+  return (this.offeredTotalPrice || 0) * rate;
+});
+
+// Formatted quote price
+rfqSchema.virtual("formattedQuotePrice").get(function() {
+  if (!this.quotePricePerKg) return null;
+  const currency = this.quoteCurrency || this.currency || "USD";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency,
+    }).format(this.quotePricePerKg);
+  } catch (error) {
+    return `${currency} ${this.quotePricePerKg}`;
+  }
+});
+
+// Formatted final price
+rfqSchema.virtual("formattedFinalPrice").get(function() {
+  if (!this.finalPricePerKg) return null;
+  const currency = this.finalCurrency || this.currency || "USD";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency,
+    }).format(this.finalPricePerKg);
+  } catch (error) {
+    return `${currency} ${this.finalPricePerKg}`;
+  }
+});
+
+// Check if RFQ is expired
 rfqSchema.virtual("isExpired").get(function() {
   return this.validUntil && new Date() > this.validUntil && this.status !== "accepted";
 });
 
-rfqSchema.virtual("totalValueFormatted").get(function() {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: this.currency,
-  }).format(this.offeredTotalPrice);
+// ==================== PRE-SAVE MIDDLEWARE ====================
+rfqSchema.pre("save", async function() {
+  try {
+    // Generate RFQ number if not exists
+    if (!this.rfqNumber) {
+      const date = new Date();
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const count = await mongoose.model("RFQ").countDocuments();
+      const sequence = String(count + 1).padStart(6, "0");
+      this.rfqNumber = `RFQ-${year}${month}-${sequence}`;
+    }
+
+    // Calculate total price
+    if (this.requestedWeightKg && this.offeredPricePerKg) {
+      this.offeredTotalPrice = this.requestedWeightKg * this.offeredPricePerKg;
+    }
+
+    if (this.quotePricePerKg && this.requestedWeightKg) {
+      this.quoteTotalPrice = this.requestedWeightKg * this.quotePricePerKg;
+    }
+
+    // Set default exchange rate if not set
+    if (!this.exchangeRate) {
+      this.exchangeRate = this.currency === "USD" ? 1 : 1500;
+    }
+
+    // Auto-expire logic
+    if (this.validUntil && new Date() > this.validUntil && this.status === "pending") {
+      this.status = "expired";
+      this.addToHistory("expired", "RFQ expired due to time limit");
+    }
+
+  } catch (error) {
+    console.error("RFQ pre-save error:", error);
+  
+  }
 });
 
-rfqSchema.virtual("quoteValueFormatted").get(function() {
-  if (!this.quoteTotalPrice) return null;
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: this.currency,
-  }).format(this.quoteTotalPrice);
-});
-
-rfqSchema.virtual("negotiationRound").get(function() {
-  return this.negotiationHistory.length;
-});
-
-// Pre-save Middleware
-rfqSchema.pre("save", async function(next) {
-  // Generate RFQ number if not exists
-  if (!this.rfqNumber) {
-    const date = new Date();
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const count = await mongoose.model("RFQ").countDocuments();
-    const sequence = String(count + 1).padStart(6, "0");
-    this.rfqNumber = `RFQ-${year}${month}-${sequence}`;
-  }
-
-  // Calculate total price
-  if (this.requestedWeightKg && this.offeredPricePerKg) {
-    this.offeredTotalPrice = this.requestedWeightKg * this.offeredPricePerKg;
-  }
-
-  if (this.quotePricePerKg && this.requestedWeightKg) {
-    this.quoteTotalPrice = this.requestedWeightKg * this.quotePricePerKg;
-  }
-
-  // Auto-expire logic
-  if (this.validUntil && new Date() > this.validUntil && this.status === "pending") {
-    this.status = "expired";
-    this.addToHistory("expired", "RFQ expired due to time limit");
-  }
-
-  next();
-});
-
-// Methods
+// ==================== METHODS ====================
 rfqSchema.methods.addToHistory = function(action, message, price = null, userId = null) {
   this.responseHistory.push({
     action,
@@ -358,7 +408,7 @@ rfqSchema.methods.addToHistory = function(action, message, price = null, userId 
   });
 };
 
-rfqSchema.methods.addNegotiation = async function(pricePerKg, message, proposedBy, userId) {
+rfqSchema.methods.addNegotiation = async function(pricePerKg, message, proposedBy, userId, currency = null) {
   this.negotiationHistory.push({
     round: this.negotiationHistory.length + 1,
     pricePerKg,
@@ -366,6 +416,7 @@ rfqSchema.methods.addNegotiation = async function(pricePerKg, message, proposedB
     message,
     proposedBy,
     userId,
+    currency: currency || this.currency || "USD",
     createdAt: new Date(),
   });
 
@@ -381,6 +432,7 @@ rfqSchema.methods.accept = async function(userId) {
     : this.quotePricePerKg || this.offeredPricePerKg;
   
   this.finalTotalPrice = this.finalPricePerKg * this.requestedWeightKg;
+  this.finalCurrency = this.currency || "USD";
   this.reviewedBy = userId;
   this.reviewedAt = new Date();
   this.addToHistory("accepted", "RFQ accepted", this.finalPricePerKg, userId);
@@ -396,7 +448,7 @@ rfqSchema.methods.reject = async function(reason, userId) {
   await this.save();
 };
 
-// Static Methods
+// ==================== STATIC METHODS ====================
 rfqSchema.statics.getPendingRFQs = async function() {
   return this.find({
     status: { $in: ["pending", "under_review"] },
@@ -425,5 +477,35 @@ rfqSchema.statics.getRFQSummary = async function() {
   ]);
   return summary;
 };
+
+rfqSchema.statics.getRFQSummaryByCurrency = async function() {
+  const summary = await this.aggregate([
+    {
+      $match: { isActive: true },
+    },
+    {
+      $group: {
+        _id: "$currency",
+        count: { $sum: 1 },
+        totalValue: { $sum: "$offeredTotalPrice" },
+        totalWeight: { $sum: "$requestedWeightKg" },
+      },
+    },
+  ]);
+  return summary;
+};
+
+rfqSchema.statics.getByCurrency = async function(currency) {
+  return this.find({
+    currency: currency,
+    isActive: true,
+  })
+    .populate("buyer", "fullName email phone")
+    .populate("supplier", "fullName email")
+    .populate("inventory", "weightKg purity askingPrice location")
+    .sort("-createdAt");
+};
+
+
 
 module.exports = mongoose.model("RFQ", rfqSchema);

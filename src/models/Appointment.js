@@ -6,7 +6,6 @@ const appointmentSchema = new mongoose.Schema(
     appointmentNumber: {
       type: String,
       unique: true,
-      required: true,
       index: true,
     },
 
@@ -319,7 +318,6 @@ const appointmentSchema = new mongoose.Schema(
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
     },
 
     updatedBy: {
@@ -372,15 +370,17 @@ appointmentSchema.virtual("durationHours").get(function () {
 });
 
 // Pre-save Middleware
-appointmentSchema.pre("save", async function (next) {
-  // Generate appointment number if not exists
+// Pre-save Middleware - Alternative sync approach
+appointmentSchema.pre("save", function() {
+  // Generate appointment number if not exists - using sync method
   if (!this.appointmentNumber) {
+    // Use a sync approach - generate based on timestamp
     const date = new Date();
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0");
-    const count = await mongoose.model("Appointment").countDocuments();
-    const sequence = String(count + 1).padStart(6, "0");
-    this.appointmentNumber = `APT-${year}${month}-${sequence}`;
+    const day = String(date.getDate()).padStart(2, "0");
+    const random = Math.floor(Math.random() * 10000).toString().padStart(4, "0");
+    this.appointmentNumber = `APT-${year}${month}${day}-${random}`;
   }
 
   // Calculate duration from start and end times
@@ -392,34 +392,78 @@ appointmentSchema.pre("save", async function (next) {
     this.duration = endMinutes - startMinutes;
   }
 
-  next();
+ 
 });
-
 // Methods
-appointmentSchema.methods.confirm = async function (userId, userRole) {
-  if (userRole === "supplier") {
-    this.supplierConfirmed = true;
-  } else if (userRole === "buyer") {
-    this.buyerConfirmed = true;
-  } else {
-    this.confirmedBy = userId;
-    this.confirmedAt = new Date();
+// Confirm appointment method - FIXED VERSION
+appointmentSchema.methods.confirm = async function(userId, userRole) {
+  try {
+    // Convert IDs to strings for comparison
+    const userIdStr = userId.toString();
+    const supplierIdStr = this.supplier ? this.supplier.toString() : null;
+    const buyerIdStr = this.buyer ? this.buyer.toString() : null;
+    
+    console.log("🔍 Confirm appointment called with:", {
+      userId: userIdStr,
+      userRole: userRole,
+      supplierId: supplierIdStr,
+      buyerId: buyerIdStr,
+      currentStatus: this.status,
+      supplierConfirmed: this.supplierConfirmed,
+      buyerConfirmed: this.buyerConfirmed
+    });
+    
+    // If user is admin or staff, confirm directly
+    if (userRole === "admin" || userRole === "staff") {
+      this.status = "confirmed";
+      this.confirmedBy = userId;
+      this.confirmedAt = new Date();
+      this.updatedBy = userId;
+      console.log("✅ Admin/Staff confirmed appointment");
+      await this.save();
+      return this;
+    }
+    
+    // Check if user is the supplier
+    if (supplierIdStr && supplierIdStr === userIdStr) {
+      this.supplierConfirmed = true;
+      console.log("✅ Supplier confirmed");
+    } 
+    // Check if user is the buyer
+    else if (buyerIdStr && buyerIdStr === userIdStr) {
+      this.buyerConfirmed = true;
+      console.log("✅ Buyer confirmed");
+    } 
+    // If user is neither supplier nor buyer nor staff
+    else {
+      throw new Error("User is not authorized to confirm this appointment");
+    }
+    
+    // Update status based on confirmations
+    if (this.supplierConfirmed && this.buyerConfirmed) {
+      this.status = "confirmed";
+      console.log("✅ Both parties confirmed - status changed to confirmed");
+    } else {
+      console.log("⏳ Waiting for other party to confirm. Current status:", this.status);
+    }
+    
+    this.updatedBy = userId;
+    await this.save();
+    
+    console.log("📋 Appointment after save:", {
+      id: this._id,
+      status: this.status,
+      supplierConfirmed: this.supplierConfirmed,
+      buyerConfirmed: this.buyerConfirmed,
+      confirmedBy: this.confirmedBy
+    });
+    
+    return this;
+  } catch (error) {
+    console.error("❌ Error in confirm method:", error);
+    throw error;
   }
-
-  // Auto-confirm when both parties confirm
-  if (
-    !this.confirmationRequired ||
-    (this.supplierConfirmed && this.buyerConfirmed) ||
-    (this.confirmedBy && this.supplierConfirmed) ||
-    (this.confirmedBy && this.buyerConfirmed)
-  ) {
-    this.status = "confirmed";
-  }
-
-  this.updatedBy = userId;
-  await this.save();
 };
-
 appointmentSchema.methods.cancel = async function (reason, userId) {
   this.status = "cancelled";
   this.cancellationReason = reason;

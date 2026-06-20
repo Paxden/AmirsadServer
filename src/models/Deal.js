@@ -5,7 +5,6 @@ const dealSchema = new mongoose.Schema(
     dealNumber: {
       type: String,
       unique: true,
-      required: true,
       index: true,
     },
 
@@ -58,7 +57,7 @@ const dealSchema = new mongoose.Schema(
     currency: {
       type: String,
       default: "USD",
-      enum: ["USD", "EUR", "GBP", "AED"],
+      enum: ["USD", "NGN"], // Only USD and Naira
     },
 
     purity: {
@@ -67,27 +66,34 @@ const dealSchema = new mongoose.Schema(
       max: 100,
     },
 
+    // Exchange Rate (for currency conversion tracking)
+    exchangeRate: {
+      type: Number,
+      default: 1,
+      min: 0,
+    },
+
     // Enhanced Deal Status Flow
     status: {
       type: String,
       enum: [
-        "open", // Initial state after RFQ acceptance
-        "inspection_scheduled", // Inspection appointment set
-        "inspection_completed", // Inspection done, waiting for report
-        "inspection_passed", // Quality verified
-        "inspection_failed", // Quality issues found
-        "offer_made", // Staff made counter offer
-        "offer_received", // Buyer received offer
-        "offer_accepted", // Terms agreed
-        "offer_rejected", // Offer declined
-        "agreement_signed", // Contract signed
-        "payment_pending", // Waiting for payment
-        "payment_received", // Payment confirmed
-        "delivery_scheduled", // Delivery arranged
-        "delivery_completed", // Gold delivered
-        "closed", // Deal successfully completed
-        "cancelled", // Deal cancelled
-        "disputed", // Under dispute resolution
+        "open",
+        "inspection_scheduled",
+        "inspection_completed",
+        "inspection_passed",
+        "inspection_failed",
+        "offer_made",
+        "offer_received",
+        "offer_accepted",
+        "offer_rejected",
+        "agreement_signed",
+        "payment_pending",
+        "payment_received",
+        "delivery_scheduled",
+        "delivery_completed",
+        "closed",
+        "cancelled",
+        "disputed",
       ],
       default: "open",
       index: true,
@@ -181,6 +187,11 @@ const dealSchema = new mongoose.Schema(
       dueDate: Date,
       paidAt: Date,
       amount: Number,
+      currency: {
+        type: String,
+        enum: ["USD", "NGN"],
+        default: "USD",
+      },
       reference: String,
       method: {
         type: String,
@@ -189,6 +200,11 @@ const dealSchema = new mongoose.Schema(
       transactions: [
         {
           amount: Number,
+          currency: {
+            type: String,
+            enum: ["USD", "NGN"],
+            default: "USD",
+          },
           date: Date,
           reference: String,
           notes: String,
@@ -237,6 +253,11 @@ const dealSchema = new mongoose.Schema(
     platformFee: {
       amount: Number,
       percentage: Number,
+      currency: {
+        type: String,
+        enum: ["USD", "NGN"],
+        default: "USD",
+      },
       paid: {
         type: Boolean,
         default: false,
@@ -352,18 +373,52 @@ const dealSchema = new mongoose.Schema(
 );
 
 // Indexes
-// dealSchema.index({ dealNumber: 1 });
 dealSchema.index({ supplier: 1, status: 1 });
 dealSchema.index({ buyer: 1, status: 1 });
 dealSchema.index({ status: 1, createdAt: -1 });
 dealSchema.index({ "timeline.closedAt": 1 });
 
-// Virtuals
+// ==================== VIRTUAL FIELDS ====================
+
+// Formatted total based on currency
 dealSchema.virtual("formattedTotal").get(function () {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: this.currency,
-  }).format(this.totalAmount);
+  const currency = this.currency || "USD";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency,
+    }).format(this.totalAmount || 0);
+  } catch (error) {
+    return `${this.currency || "USD"} ${this.totalAmount || 0}`;
+  }
+});
+
+// Formatted total in USD (for reporting)
+dealSchema.virtual("totalInUSD").get(function () {
+  if (this.currency === "USD") return this.totalAmount;
+  // Approximate conversion rate - you can make this configurable
+  const exchangeRate = this.exchangeRate || 1500; // ₦ to USD
+  return this.totalAmount / exchangeRate;
+});
+
+// Formatted total in Naira (for reporting)
+dealSchema.virtual("totalInNGN").get(function () {
+  if (this.currency === "NGN") return this.totalAmount;
+  const exchangeRate = this.exchangeRate || 1500; // USD to ₦
+  return this.totalAmount * exchangeRate;
+});
+
+// Formatted price per kg based on currency
+dealSchema.virtual("formattedPricePerKg").get(function () {
+  const currency = this.currency || "USD";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency,
+    }).format(this.agreedPricePerKg || 0);
+  } catch (error) {
+    return `${this.currency || "USD"} ${this.agreedPricePerKg || 0}`;
+  }
 });
 
 dealSchema.virtual("daysOpen").get(function () {
@@ -387,55 +442,63 @@ dealSchema.virtual("currentStage").get(function () {
   return stages[this.status] || this.status;
 });
 
-// Pre-save middleware
-dealSchema.pre("save", async function (next) {
-  // Generate deal number if not exists
-  if (!this.dealNumber) {
-    const date = new Date();
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const count = await mongoose.model("Deal").countDocuments();
-    const sequence = String(count + 1).padStart(6, "0");
-    this.dealNumber = `DL-${year}${month}-${sequence}`;
+// ==================== PRE-SAVE MIDDLEWARE ====================
+dealSchema.pre("save", async function () {
+  try {
+    // Generate deal number if not exists
+    if (!this.dealNumber) {
+      const date = new Date();
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const count = await mongoose.model("Deal").countDocuments();
+      const sequence = String(count + 1).padStart(6, "0");
+      this.dealNumber = `DL-${year}${month}-${sequence}`;
+    }
+
+    // Calculate total amount
+    if (this.quantityKg && this.agreedPricePerKg) {
+      this.totalAmount = this.quantityKg * this.agreedPricePerKg;
+    }
+
+    // Set default exchange rate if not set
+    if (!this.exchangeRate) {
+      this.exchangeRate = this.currency === "USD" ? 1 : 1500;
+    }
+
+    // Update timeline based on status
+    if (this.isModified("status")) {
+      this.statusHistory.push({
+        status: this.status,
+        changedBy: this.updatedBy || this.createdBy,
+      });
+
+      // Update timeline dates
+      if (this.status === "inspection_scheduled" && !this.timeline.inspectionAt) {
+        this.timeline.inspectionAt = new Date();
+      }
+      if (this.status === "offer_made" && !this.timeline.offerAt) {
+        this.timeline.offerAt = new Date();
+      }
+      if (this.status === "agreement_signed" && !this.timeline.agreementAt) {
+        this.timeline.agreementAt = new Date();
+      }
+      if (this.status === "payment_received" && !this.timeline.paymentAt) {
+        this.timeline.paymentAt = new Date();
+      }
+      if (this.status === "delivery_completed" && !this.timeline.deliveryAt) {
+        this.timeline.deliveryAt = new Date();
+      }
+      if (this.status === "closed" && !this.timeline.closedAt) {
+        this.timeline.closedAt = new Date();
+      }
+    }
+
+  } catch (error) {
+    console.log(error)
   }
-
-  // Calculate total amount
-  if (this.quantityKg && this.agreedPricePerKg) {
-    this.totalAmount = this.quantityKg * this.agreedPricePerKg;
-  }
-
-  // Update timeline based on status
-  if (this.isModified("status")) {
-    this.statusHistory.push({
-      status: this.status,
-      changedBy: this.updatedBy || this.createdBy,
-    });
-
-    // Update timeline dates
-    if (this.status === "inspection_scheduled" && !this.timeline.inspectionAt) {
-      this.timeline.inspectionAt = new Date();
-    }
-    if (this.status === "offer_made" && !this.timeline.offerAt) {
-      this.timeline.offerAt = new Date();
-    }
-    if (this.status === "agreement_signed" && !this.timeline.agreementAt) {
-      this.timeline.agreementAt = new Date();
-    }
-    if (this.status === "payment_received" && !this.timeline.paymentAt) {
-      this.timeline.paymentAt = new Date();
-    }
-    if (this.status === "delivery_completed" && !this.timeline.deliveryAt) {
-      this.timeline.deliveryAt = new Date();
-    }
-    if (this.status === "closed" && !this.timeline.closedAt) {
-      this.timeline.closedAt = new Date();
-    }
-  }
-
-  next();
 });
 
-// Methods
+// ==================== METHODS ====================
 dealSchema.methods.updateStatus = async function (newStatus, userId, notes) {
   const oldStatus = this.status;
   this.status = newStatus;
@@ -497,13 +560,28 @@ dealSchema.methods.completeInspection = async function (inspectionData, userId) 
   return this;
 };
 
-// Static methods
+// ==================== STATIC METHODS ====================
 dealSchema.statics.getDealSummary = async function () {
   const summary = await this.aggregate([
     { $match: { isActive: true } },
     {
       $group: {
         _id: "$status",
+        count: { $sum: 1 },
+        totalValue: { $sum: "$totalAmount" },
+        totalWeight: { $sum: "$quantityKg" },
+      },
+    },
+  ]);
+  return summary;
+};
+
+dealSchema.statics.getDealSummaryByCurrency = async function () {
+  const summary = await this.aggregate([
+    { $match: { isActive: true } },
+    {
+      $group: {
+        _id: "$currency",
         count: { $sum: 1 },
         totalValue: { $sum: "$totalAmount" },
         totalWeight: { $sum: "$quantityKg" },

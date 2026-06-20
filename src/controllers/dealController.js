@@ -173,7 +173,7 @@ exports.createDeal = async (req, res) => {
 };
 
 /**
- * Get all deals (with filters) - Admin/Staff only
+ * Get all deals (Admin/Staff)
  */
 exports.getAllDeals = async (req, res) => {
   try {
@@ -189,16 +189,28 @@ exports.getAllDeals = async (req, res) => {
       sortOrder = "desc",
     } = req.query;
 
-    const query = { isActive: true };
+    // Build query - remove isActive filter if it's causing issues
+    const query = {};
+
+    // Only filter by isActive if the field exists, otherwise return all
+    // Option 1: Remove isActive filter entirely
+    // Option 2: Check if deals have isActive field
 
     if (status) query.status = status;
     if (supplierId) query.supplier = supplierId;
     if (buyerId) query.buyer = buyerId;
-    if (startDate) query.createdAt = { $gte: new Date(startDate) };
-    if (endDate) query.createdAt = { ...query.createdAt, $lte: new Date(endDate) };
+
+    if (startDate) {
+      query.createdAt = { $gte: new Date(startDate) };
+    }
+    if (endDate) {
+      query.createdAt = { ...query.createdAt, $lte: new Date(endDate) };
+    }
 
     const sortOptions = {};
     sortOptions[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+    console.log("Deals query:", JSON.stringify(query));
 
     const deals = await Deal.find(query)
       .populate("supplier", "fullName email phone profile")
@@ -210,6 +222,8 @@ exports.getAllDeals = async (req, res) => {
       .skip((page - 1) * limit);
 
     const total = await Deal.countDocuments(query);
+
+    console.log(`Found ${total} deals`);
 
     res.status(200).json({
       success: true,
@@ -223,6 +237,77 @@ exports.getAllDeals = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to fetch deals",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get user's deals (supplier or buyer)
+ */
+exports.getMyDeals = async (req, res) => {
+  try {
+    // Get user ID correctly - check both id and _id
+    const userId = req.user.id || req.user._id;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "User not authenticated",
+      });
+    }
+
+   
+
+    const { status, page = 1, limit = 20 } = req.query;
+
+    // Build query based on user role
+    let query = { isActive: true };
+    const userRole = req.user.role;
+
+    if (userRole === "supplier") {
+      query.supplier = userId;
+    } else if (userRole === "buyer") {
+      query.buyer = userId;
+    } else {
+      // Admin/Staff - show all deals they're involved in
+      query.$or = [{ supplier: userId }, { buyer: userId }];
+    }
+
+    if (status) query.status = status;
+
+    // Log for debugging
+    console.log("🔍 GetMyDeals query:", JSON.stringify(query));
+    console.log("👤 User ID:", userId.toString());
+    console.log("📋 User Role:", userRole);
+
+    const deals = await Deal.find(query)
+      .populate("supplier", "fullName email phone profile")
+      .populate("buyer", "fullName email phone profile")
+      .populate("inventory", "inventoryNumber weightKg purity askingPrice")
+      .populate("rfq", "rfqNumber offeredPricePerKg")
+      .sort("-createdAt")
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .lean();
+
+    const total = await Deal.countDocuments(query);
+
+    console.log(`✅ Found ${total} deals for ${userRole} ${userId.toString()}`);
+
+    res.status(200).json({
+      success: true,
+      deals,
+      total,
+      page: parseInt(page),
+      pages: Math.ceil(total / limit),
+    });
+  } catch (error) {
+    console.error("❌ Get my deals error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch deals",
+      error: error.message,
     });
   }
 };
@@ -1123,50 +1208,6 @@ exports.getDealStats = async (req, res) => {
   }
 };
 
-/**
- * Get user's deals (supplier or buyer)
- */
-exports.getMyDeals = async (req, res) => {
-  try {
-    const { status, page = 1, limit = 20 } = req.query;
-
-    let query = { isActive: true };
-
-    if (req.user.role === "supplier") {
-      query.supplier = req.user.id;
-    } else if (req.user.role === "buyer") {
-      query.buyer = req.user.id;
-    } else {
-      query.$or = [{ supplier: req.user.id }, { buyer: req.user.id }];
-    }
-
-    if (status) query.status = status;
-
-    const deals = await Deal.find(query)
-      .populate("supplier", "fullName email profile")
-      .populate("buyer", "fullName email profile")
-      .populate("inventory", "inventoryNumber weightKg purity")
-      .sort("-createdAt")
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const total = await Deal.countDocuments(query);
-
-    res.status(200).json({
-      success: true,
-      deals,
-      total,
-      page: parseInt(page),
-      pages: Math.ceil(total / limit),
-    });
-  } catch (error) {
-    console.error("Get my deals error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch deals",
-    });
-  }
-};
 
 /**
  * Rate deal (supplier or buyer)
@@ -1175,7 +1216,7 @@ exports.rateDeal = async (req, res) => {
   try {
     const { id } = req.params;
     const { supplierRating, buyerRating, supplierFeedback, buyerFeedback } = req.body;
-    
+
     const deal = await Deal.findById(id);
     if (!deal) {
       return res.status(404).json({
@@ -1183,7 +1224,7 @@ exports.rateDeal = async (req, res) => {
         message: "Deal not found",
       });
     }
-    
+
     // Check if user is part of the deal
     if (deal.supplier.toString() !== req.user.id && deal.buyer.toString() !== req.user.id) {
       return res.status(403).json({
@@ -1191,10 +1232,10 @@ exports.rateDeal = async (req, res) => {
         message: "Not authorized to rate this deal",
       });
     }
-    
+
     // Determine if user is supplier or buyer
     const isSupplier = deal.supplier.toString() === req.user.id;
-    
+
     if (isSupplier && buyerRating) {
       deal.buyerRating = {
         rating: buyerRating,
@@ -1208,9 +1249,9 @@ exports.rateDeal = async (req, res) => {
         ratedAt: new Date(),
       };
     }
-    
+
     await deal.save();
-    
+
     res.status(200).json({
       success: true,
       message: "Rating submitted successfully",
