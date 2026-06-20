@@ -2,8 +2,7 @@ const RFQ = require("../models/RFQ");
 const Inventory = require("../models/Inventory");
 const BuyerProfile = require("../models/BuyerProfile");
 const User = require("../models/User");
-// const NotificationService = require("../services/notificationService");
-
+const NotificationService = require("../services/notificationService");
 
 /**
  * Create new RFQ
@@ -24,7 +23,6 @@ exports.createRFQ = async (req, res) => {
       message,
     } = req.body;
 
-    // Get user ID from request - handle both formats
     const userId = req.user?.id || req.user?._id;
     
     if (!userId) {
@@ -38,7 +36,6 @@ exports.createRFQ = async (req, res) => {
     console.log("User ID:", userId);
     console.log("User role:", req.user?.role);
 
-    // Validate required fields
     if (!inventoryId) {
       return res.status(400).json({
         success: false,
@@ -60,7 +57,6 @@ exports.createRFQ = async (req, res) => {
       });
     }
 
-    // Check inventory exists and is available
     const inventory = await Inventory.findById(inventoryId);
     if (!inventory) {
       return res.status(404).json({
@@ -76,7 +72,6 @@ exports.createRFQ = async (req, res) => {
       });
     }
 
-    // Check if requested weight exceeds available
     const requestedWeight = parseFloat(requestedWeightKg);
     const availableWeight = inventory.availableWeightKg || 0;
     
@@ -87,15 +82,11 @@ exports.createRFQ = async (req, res) => {
       });
     }
 
-    // Get buyer profile
     const buyerProfile = await BuyerProfile.findOne({ user: userId });
-
-    // Calculate total price
     const offeredTotalPrice = requestedWeight * parseFloat(offeredPricePerKg);
 
-    // Create RFQ data with correct user ID
     const rfqData = {
-      buyer: userId, // Use the extracted userId
+      buyer: userId,
       buyerProfile: buyerProfile?._id,
       inventory: inventoryId,
       supplier: inventory.supplier,
@@ -112,7 +103,6 @@ exports.createRFQ = async (req, res) => {
       createdBy: userId,
     };
 
-    // Add optional fields if provided
     if (validUntil) rfqData.validUntil = new Date(validUntil);
     if (preferredDeliveryDate) rfqData.preferredDeliveryDate = new Date(preferredDeliveryDate);
 
@@ -138,12 +128,8 @@ exports.createRFQ = async (req, res) => {
 /**
  * Get RFQs for buyer
  */
-/**
- * Get RFQs for buyer
- */
 exports.getBuyerRFQs = async (req, res) => {
   try {
-    // Get user ID correctly
     const buyerId = req.user.id || req.user._id;
     
     if (!buyerId) {
@@ -155,7 +141,6 @@ exports.getBuyerRFQs = async (req, res) => {
 
     const { status, page = 1, limit = 10 } = req.query;
 
-    // Build query - match buyer field
     const query = {
       buyer: buyerId,
       isActive: true,
@@ -163,12 +148,9 @@ exports.getBuyerRFQs = async (req, res) => {
 
     if (status) query.status = status;
 
-    // Log for debugging
     console.log("Buyer RFQ query:", JSON.stringify(query));
     console.log("Buyer ID:", buyerId);
-    console.log("Status filter:", status);
 
-    // Use .lean() to get plain objects
     const rfqs = await RFQ.find(query)
       .populate("buyer", "fullName email phone")
       .populate("buyerProfile", "companyName buyerType kycStatus")
@@ -183,19 +165,14 @@ exports.getBuyerRFQs = async (req, res) => {
 
     console.log(`Found ${total} RFQs for buyer`);
 
-    // Sanitize each RFQ
-    const sanitizedRFQs = rfqs.map(rfq => {
-      // Ensure currency has a valid value
-      return {
-        ...rfq,
-        currency: rfq.currency || "USD",
-        // Remove any problematic fields
-        isExpired: undefined,
-        totalValueFormatted: undefined,
-        quoteValueFormatted: undefined,
-        negotiationRound: undefined,
-      };
-    });
+    const sanitizedRFQs = rfqs.map(rfq => ({
+      ...rfq,
+      currency: rfq.currency || "USD",
+      isExpired: undefined,
+      totalValueFormatted: undefined,
+      quoteValueFormatted: undefined,
+      negotiationRound: undefined,
+    }));
 
     res.status(200).json({
       success: true,
@@ -217,12 +194,8 @@ exports.getBuyerRFQs = async (req, res) => {
 /**
  * Get RFQs for supplier
  */
-/**
- * Get RFQs for supplier
- */
 exports.getSupplierRFQs = async (req, res) => {
   try {
-    // Get user ID correctly
     const supplierId = req.user.id || req.user._id;
     
     if (!supplierId) {
@@ -234,7 +207,6 @@ exports.getSupplierRFQs = async (req, res) => {
 
     const { status, page = 1, limit = 10 } = req.query;
 
-    // Build query - match supplier field
     const query = {
       supplier: supplierId,
       isActive: true,
@@ -242,11 +214,9 @@ exports.getSupplierRFQs = async (req, res) => {
 
     if (status) query.status = status;
 
-    // Log for debugging
     console.log("Supplier RFQ query:", JSON.stringify(query));
     console.log("Supplier ID:", supplierId);
 
-    // Use .lean() to get plain objects and avoid virtual serialization issues
     const rfqs = await RFQ.find(query)
       .populate("buyer", "fullName email phone")
       .populate("buyerProfile", "companyName buyerType kycStatus")
@@ -254,22 +224,17 @@ exports.getSupplierRFQs = async (req, res) => {
       .sort("-createdAt")
       .limit(limit * 1)
       .skip((page - 1) * limit)
-      .lean(); // Add .lean() to bypass virtuals
+      .lean();
 
     const total = await RFQ.countDocuments(query);
 
     console.log(`Found ${total} RFQs for supplier`);
 
-    // Sanitize each RFQ to ensure no virtual fields are present
     const sanitizedRFQs = rfqs.map(rfq => {
-      // Remove any virtual fields that might cause issues
       const { isExpired, totalValueFormatted, quoteValueFormatted, negotiationRound, ...cleanRFQ } = rfq;
-      
-      // Ensure currency has a valid value
       if (!cleanRFQ.currency) {
         cleanRFQ.currency = "USD";
       }
-      
       return cleanRFQ;
     });
 
@@ -289,6 +254,7 @@ exports.getSupplierRFQs = async (req, res) => {
     });
   }
 };
+
 /**
  * Get RFQ by ID
  */
@@ -313,7 +279,6 @@ exports.getRFQById = async (req, res) => {
       });
     }
 
-    // Check authorization
     const isAuthorized =
       req.user.role === "admin" ||
       req.user.role === "staff" ||
@@ -368,6 +333,22 @@ exports.staffResponse = async (req, res) => {
     rfq.addToHistory("quoted", staffResponse, quotePricePerKg, req.user.id);
     await rfq.save();
 
+    // Send notification to buyer
+    try {
+      await NotificationService.send(rfq.buyer, {
+        title: "Quote Received",
+        message: `You have received a quote for RFQ ${rfq.rfqNumber}`,
+        type: "rfq",
+        priority: "high",
+        relatedType: "rfq",
+        relatedId: rfq._id,
+        actionUrl: `/dashboard/rfqs/${rfq._id}`,
+        actionLabel: "View Quote",
+      });
+    } catch (notifError) {
+      console.error("Failed to send notification:", notifError);
+    }
+
     res.status(200).json({
       success: true,
       message: "Response sent to buyer",
@@ -385,14 +366,10 @@ exports.staffResponse = async (req, res) => {
 /**
  * Buyer accepts RFQ
  */
-/**
- * Buyer accepts RFQ
- */
 exports.acceptRFQ = async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Get user ID correctly
     const userId = req.user.id || req.user._id;
     
     if (!userId) {
@@ -410,7 +387,6 @@ exports.acceptRFQ = async (req, res) => {
       });
     }
 
-    // Check if the user is the buyer
     const rfqBuyerId = rfq.buyer.toString();
     const userIdStr = userId.toString();
     
@@ -428,7 +404,6 @@ exports.acceptRFQ = async (req, res) => {
       });
     }
 
-    // Check if RFQ has been quoted
     if (rfq.status !== "quoted" && rfq.status !== "negotiation") {
       return res.status(400).json({
         success: false,
@@ -436,7 +411,6 @@ exports.acceptRFQ = async (req, res) => {
       });
     }
 
-    // Accept the RFQ
     rfq.status = "accepted";
     rfq.finalPricePerKg = rfq.quotePricePerKg || rfq.offeredPricePerKg;
     rfq.finalTotalPrice = rfq.finalPricePerKg * rfq.requestedWeightKg;
@@ -446,18 +420,15 @@ exports.acceptRFQ = async (req, res) => {
     
     await rfq.save();
 
-    // Create a deal from the accepted RFQ
     let deal = null;
     try {
       const Deal = require("../models/Deal");
       const Inventory = require("../models/Inventory");
       
-      // Get inventory details
       const inventory = await Inventory.findById(rfq.inventory);
       if (!inventory) {
         console.error("Inventory not found for RFQ:", rfq.inventory);
       } else {
-        // Prepare deal data
         const dealData = {
           rfq: rfq._id,
           inventory: rfq.inventory,
@@ -474,11 +445,9 @@ exports.acceptRFQ = async (req, res) => {
         
         console.log("Creating deal with data:", dealData);
         
-        // Create deal
         deal = await Deal.create(dealData);
         console.log("✅ Deal created from RFQ:", deal.dealNumber);
         
-        // Update inventory - reserve the quantity
         inventory.availableWeightKg -= rfq.requestedWeightKg;
         if (inventory.availableWeightKg <= 0) {
           inventory.status = "reserved";
@@ -488,26 +457,22 @@ exports.acceptRFQ = async (req, res) => {
       }
     } catch (dealError) {
       console.error("❌ Failed to create deal from RFQ:", dealError.message);
-      console.error("Full error:", dealError);
-      // Don't fail the request if deal creation fails
     }
 
-    // Send notification to supplier
-    // try {
-    //   const NotificationService = require("../services/notificationService");
-      // await NotificationService.send(rfq.supplier, {
-    //     title: "RFQ Accepted",
-    //     message: `RFQ ${rfq.rfqNumber} has been accepted by the buyer.${deal ? ` Deal ${deal.dealNumber} has been created.` : ''}`,
-    //     type: "rfq",
-    //     priority: "high",
-    //     relatedType: "rfq",
-    //     relatedId: rfq._id,
-    //     actionUrl: `/dashboard/deals`,
-    //     actionLabel: "View Deals",
-    //   });
-    // } catch (notifError) {
-    //   console.error("Failed to send notification:", notifError);
-    // }
+    try {
+      await NotificationService.send(rfq.supplier, {
+        title: "RFQ Accepted",
+        message: `RFQ ${rfq.rfqNumber} has been accepted by the buyer.${deal ? ` Deal ${deal.dealNumber} has been created.` : ''}`,
+        type: "rfq",
+        priority: "high",
+        relatedType: "rfq",
+        relatedId: rfq._id,
+        actionUrl: `/dashboard/deals`,
+        actionLabel: "View Deals",
+      });
+    } catch (notifError) {
+      console.error("Failed to send notification:", notifError);
+    }
 
     res.status(200).json({
       success: true,
@@ -648,7 +613,6 @@ exports.supplierRespondToRFQ = async (req, res) => {
       });
     }
 
-    // Check if the user is the supplier for this RFQ
     const supplierId = req.user.id || req.user._id;
     if (rfq.supplier.toString() !== supplierId.toString()) {
       return res.status(403).json({
@@ -657,7 +621,6 @@ exports.supplierRespondToRFQ = async (req, res) => {
       });
     }
 
-    // Check if RFQ is still pending
     if (rfq.status !== "pending" && rfq.status !== "under_review") {
       return res.status(400).json({
         success: false,
@@ -665,7 +628,6 @@ exports.supplierRespondToRFQ = async (req, res) => {
       });
     }
 
-    // Update RFQ with supplier's response
     rfq.quotePricePerKg = parseFloat(quotePricePerKg);
     rfq.quoteTotalPrice = parseFloat(quotePricePerKg) * rfq.requestedWeightKg;
     rfq.staffResponse = message || "Quote provided";
@@ -673,22 +635,25 @@ exports.supplierRespondToRFQ = async (req, res) => {
     rfq.reviewedBy = req.user.id || req.user._id;
     rfq.reviewedAt = new Date();
     
-    // Add to history
     rfq.addToHistory("quoted", message || "Supplier provided quote", parseFloat(quotePricePerKg), req.user.id || req.user._id);
 
     await rfq.save();
 
     // Send notification to buyer
-    // await NotificationService.send(rfq.buyer, {
-    //   title: "Quote Received",
-    //   message: `You have received a quote for RFQ ${rfq.rfqNumber}`,
-    //   type: "rfq",
-    //   priority: "high",
-    //   relatedType: "rfq",
-    //   relatedId: rfq._id,
-    //   actionUrl: `/dashboard/rfqs/${rfq._id}`,
-    //   actionLabel: "View Quote",
-    // });
+    try {
+      await NotificationService.send(rfq.buyer, {
+        title: "Quote Received",
+        message: `You have received a quote for RFQ ${rfq.rfqNumber}`,
+        type: "rfq",
+        priority: "high",
+        relatedType: "rfq",
+        relatedId: rfq._id,
+        actionUrl: `/dashboard/rfqs/${rfq._id}`,
+        actionLabel: "View Quote",
+      });
+    } catch (notifError) {
+      console.error("Failed to send notification:", notifError);
+    }
 
     res.status(200).json({
       success: true,
@@ -713,7 +678,6 @@ exports.cancelRFQ = async (req, res) => {
     const { id } = req.params;
     const { reason } = req.body;
     
-    // Get user ID correctly
     const userId = req.user.id || req.user._id;
     
     if (!userId) {
@@ -731,7 +695,6 @@ exports.cancelRFQ = async (req, res) => {
       });
     }
 
-    // Check if the user is the buyer for this RFQ
     const rfqBuyerId = rfq.buyer.toString();
     const userIdStr = userId.toString();
     
@@ -742,7 +705,6 @@ exports.cancelRFQ = async (req, res) => {
       });
     }
 
-    // Check if RFQ can be cancelled (only pending or quoted)
     if (rfq.status !== "pending" && rfq.status !== "quoted") {
       return res.status(400).json({
         success: false,
@@ -750,29 +712,26 @@ exports.cancelRFQ = async (req, res) => {
       });
     }
 
-    // Cancel the RFQ
     rfq.status = "cancelled";
     rfq.staffResponse = reason || "Cancelled by buyer";
     rfq.addToHistory("cancelled", reason || "Cancelled by buyer", null, userId);
     
     await rfq.save();
 
-    // Send notification to supplier
-    // try {
-    //   const NotificationService = require("../services/notificationService");
-    //   // await NotificationService.send(rfq.supplier, {
-    //   //   title: "RFQ Cancelled",
-    //   //   message: `RFQ ${rfq.rfqNumber} has been cancelled by the buyer. Reason: ${reason || "No reason provided"}`,
-    //   //   type: "rfq",
-    //   //   priority: "normal",
-    //     relatedType: "rfq",
-    //     relatedId: rfq._id,
-    //     actionUrl: `/dashboard/rfqs/${rfq._id}`,
-    //     actionLabel: "View RFQ",
-    //   });
-    // } catch (notifError) {
-    //   console.error("Failed to send notification:", notifError);
-    // }
+    try {
+      await NotificationService.send(rfq.supplier, {
+        title: "RFQ Cancelled",
+        message: `RFQ ${rfq.rfqNumber} has been cancelled by the buyer. Reason: ${reason || "No reason provided"}`,
+        type: "rfq",
+        priority: "normal",
+        relatedType: "rfq",
+        relatedId: rfq._id,
+        actionUrl: `/dashboard/rfqs/${rfq._id}`,
+        actionLabel: "View RFQ",
+      });
+    } catch (notifError) {
+      console.error("Failed to send notification:", notifError);
+    }
 
     res.status(200).json({
       success: true,

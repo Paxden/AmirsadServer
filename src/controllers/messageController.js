@@ -1,5 +1,5 @@
 const Message = require("../models/Message");
-const NotificationService = require("../services/notificationService");
+const NotificationService = require("../services/NotificationService");
 const { getIO } = require("../services/socketService");
 
 /**
