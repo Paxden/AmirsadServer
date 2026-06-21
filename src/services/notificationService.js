@@ -1,6 +1,6 @@
 const Notification = require("../models/Notification");
 const Message = require("../models/Message");
-const User = require("..//models/User");
+const User = require("../models/User");
 const { getIO } = require("./socketService");
 
 class NotificationService {
